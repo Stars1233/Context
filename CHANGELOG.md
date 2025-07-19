@@ -1,5 +1,7 @@
 ## Unreleased
 
+## Version 1.0.10 (110)
+
 * New JSON schema editor for tool inputs (#41)
 * Allow editing raw JSON directly for tool inputs (#42)
 * Fetch MCP metadata from /.well-known/mcp.json (#43)

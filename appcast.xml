@@ -5,15 +5,32 @@
     <description>Most recent changes with links to updates.</description>
     <language>en</language>
     <item>
+      <title>Version 1.0.10 (110)</title>
+      <link>https://www.contextmcp.app/</link>
+      <sparkle:version>110</sparkle:version>
+      <sparkle:shortVersionString>1.0.10</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[<ul>
+<li>New JSON schema editor for tool inputs (#41)</li>
+<li>Allow editing raw JSON directly for tool inputs (#42)</li>
+<li>Fetch MCP metadata from /.well-known/mcp.json (#43)</li>
+<li>Render formatted JSON in response messages (#44)</li>
+<li>Add MCP completions support for prompts &amp; resource templates (#45)</li>
+</ul>
+]]></description>
+      <pubDate>Sat, 19 Jul 2025 19:52:35 +0000</pubDate>
+      <enclosure url="https://github.com/indragiek/Context/releases/download/v1.0.10/Context_v1.0.10.dmg" sparkle:edSignature="reeqKSZjcdlFdTyFbNGugLVZZ/6nDeXVF9osH4g0DOrnU27nM3bCsWaVPThsGtce4YWALbHkxQIlTJUgZU/zDA==" length="33802192" type="application/octet-stream"/>
+    </item>
+    <item>
       <title>Version 1.0.9 (109)</title>
       <link>https://www.contextmcp.app/</link>
       <sparkle:version>109</sparkle:version>
       <sparkle:shortVersionString>1.0.9</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<ul>
-<li>Fix regression (initialization delay when using Streamable HTTP) introduced in v1.0.8 (#38)</li>
-</ul>
-]]></description>
+      <description>&lt;ul&gt;
+&lt;li&gt;Fix regression (initialization delay when using Streamable HTTP) introduced in v1.0.8 (#38)&lt;/li&gt;
+&lt;/ul&gt;
+</description>
       <pubDate>Fri, 11 Jul 2025 16:34:54 +0000</pubDate>
       <enclosure url="https://github.com/indragiek/Context/releases/download/v1.0.9/Context_v1.0.9.dmg" sparkle:edSignature="AOgjabkVDZzPBZ1/te3b4uEQTvwiaCaShMqcFfYQvmfQ+JJJPfgAxEVQSzI6THZeRFrPNqAGRZmMUkOAC34HCQ==" length="13331742" type="application/octet-stream"/>
     </item>
