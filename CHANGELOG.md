@@ -1,6 +1,10 @@
 ## Unreleased
 
 * New JSON schema editor for tool inputs (#41)
+* Allow editing raw JSON directly for tool inputs (#42)
+* Fetch MCP metadata from /.well-known/mcp.json (#43)
+* Render formatted JSON in response messages (#44)
+* Add MCP completions support for prompts & resource templates (#45)
 
 ## Version 1.0.9 (109)
 
