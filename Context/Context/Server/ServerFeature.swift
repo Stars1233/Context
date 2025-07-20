@@ -7,20 +7,28 @@ import Foundation
 import SharingGRDB
 import os
 
-struct ConnectionError: Equatable, Identifiable {
-  let id = UUID()
-  let error: String
-  let timestamp: Date
+// MARK: - Mock Errors for UI Testing
 
-  init(error: any Error) {
-    self.error = error.localizedDescription
-    self.timestamp = Date()
-  }
+private struct MockTextOnlyError: LocalizedError {
+  let message: String
+  var errorDescription: String? { message }
+}
 
-  init(message: String) {
-    self.error = message
-    self.timestamp = Date()
-  }
+private struct MockJSONPrefixError: LocalizedError {
+  let json: String
+  let message: String
+  var errorDescription: String? { "\(json) \(message)" }
+}
+
+private struct MockJSONSuffixError: LocalizedError {
+  let message: String
+  let json: String
+  var errorDescription: String? { "\(message) \(json)" }
+}
+
+private struct MockJSONOnlyError: LocalizedError {
+  let json: String
+  var errorDescription: String? { json }
 }
 
 @Reducer
@@ -85,6 +93,7 @@ struct ServerFeature {
       clientID: String?
     )
     case tokenRefreshFailed(serverID: UUID, resourceMetadataURL: URL)
+    case loadMockErrors  // Debug action for UI testing
   }
 
   @Dependency(\.mcpClientManager) var mcpClientManager
@@ -162,7 +171,7 @@ struct ServerFeature {
               return
             }
 
-            let errorStream = await client.streamErrors
+            let errorStream = await client.errors
             for await error in errorStream {
               await send(.streamError(error))
             }
@@ -362,6 +371,90 @@ struct ServerFeature {
 
       case .clearErrors:
         state.connectionErrors = []
+        return .none
+
+      case .loadMockErrors:
+        // Create 10 mock errors with various formats for UI testing
+        state.connectionErrors = [
+          // 1. Just error description text (no JSON)
+          ConnectionError(
+            error: MockTextOnlyError(
+              message: "Connection refused: Unable to establish connection to server on port 8080"
+            )),
+
+          // 2. JSON at the beginning, followed by error description
+          ConnectionError(
+            error: MockJSONPrefixError(
+              json: """
+                {"error": {"code": -32601, "message": "Method not found", "data": {"method": "tools/list"}}}
+                """,
+              message: "The requested method 'tools/list' is not supported by this server"
+            )),
+
+          // 3. Error description text, followed by JSON at the end
+          ConnectionError(
+            error: MockJSONSuffixError(
+              message: "Server returned an authentication error",
+              json: """
+                {"error": {"code": 401, "message": "Unauthorized", "data": {"realm": "MCP Server", "scopes": ["read", "write"]}}}
+                """
+            )),
+
+          // 4. Just JSON with no error description text
+          ConnectionError(
+            error: MockJSONOnlyError(
+              json: """
+                {"error": {"code": -32700, "message": "Parse error", "data": {"position": 42, "token": "unexpected"}}}
+                """
+            )),
+
+          // 5. Text only - timeout error
+          ConnectionError(
+            error: MockTextOnlyError(
+              message: "Request timed out after 30 seconds while waiting for server response"
+            )),
+
+          // 6. JSON prefix - invalid params
+          ConnectionError(
+            error: MockJSONPrefixError(
+              json: """
+                {"error": {"code": -32602, "message": "Invalid params", "data": {"param": "resource_id", "expected": "string", "received": "number"}}}
+                """,
+              message: "Parameter validation failed for resource request"
+            )),
+
+          // 7. JSON suffix - rate limit
+          ConnectionError(
+            error: MockJSONSuffixError(
+              message: "Rate limit exceeded for API endpoint",
+              json: """
+                {"error": {"code": 429, "message": "Too Many Requests", "data": {"limit": 100, "window": "1h", "retry_after": 3600}}}
+                """
+            )),
+
+          // 8. JSON only - internal server error
+          ConnectionError(
+            error: MockJSONOnlyError(
+              json: """
+                {"error": {"code": -32603, "message": "Internal error", "data": {"stack": "Error at processRequest (server.js:142)", "timestamp": "2024-01-20T15:30:45Z"}}}
+                """
+            )),
+
+          // 9. Text only - network error
+          ConnectionError(
+            error: MockTextOnlyError(
+              message: "Network error: Could not resolve hostname 'mcp-server.local'"
+            )),
+
+          // 10. JSON prefix - capability not supported
+          ConnectionError(
+            error: MockJSONPrefixError(
+              json: """
+                {"error": {"code": -32001, "message": "Capability not supported", "data": {"capability": "experimental/stream", "supported": ["tools", "resources", "prompts"]}}}
+                """,
+              message: "The server does not support the requested experimental streaming capability"
+            )),
+        ]
         return .none
 
       case .disconnect:

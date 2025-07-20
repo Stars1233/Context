@@ -30,7 +30,7 @@ public struct ServerLog: Sendable {
 // Errors thrown by the MCP client.
 public enum ClientError: Error, LocalizedError {
   /// Thrown when a request sent by the client fails and the server returns an error.
-  case requestFailed(request: any JSONRPCRequest, error: JSONRPCError)
+  case requestFailed(request: any JSONRPCRequest, error: JSONRPCError, data: Data)
 
   /// Thrown when the response received for a request is invalid.
   case requestInvalidResponse(request: any JSONRPCRequest, error: Error, data: Data)
@@ -42,6 +42,10 @@ public enum ClientError: Error, LocalizedError {
   /// Thrown when an in-flight request is cancelled.
   case requestCancelled(id: JSONRPCRequestID)
 
+  /// Thrown when the server sends an error that is not in response to a request
+  /// previously sent by the client.
+  case serverError(error: JSONRPCError, data: Data)
+
   /// Thrown when attempting to send a request without being connected to the server.
   case notConnected
 
@@ -49,32 +53,72 @@ public enum ClientError: Error, LocalizedError {
   case capabilityNotSupported(String)
 
   /// Thrown when no pending request exists for a given ID
-  case noPendingRequest(id: JSONRPCRequestID)
+  case noPendingRequest(id: JSONRPCRequestID, data: Data)
 
   /// Thrown when an unsupported notification is received
-  case unsupportedNotification(method: String)
+  case unsupportedNotification(data: Data)
 
   /// Thrown when a server request has an unexpected type
   case unexpectedRequestType(method: String, expectedType: String)
 
   public var errorDescription: String? {
     switch self {
-    case let .requestFailed(request, error):
-      return "Request '\(request.method)' failed: \(error.error.message)"
-    case let .requestInvalidResponse(request, error, _):
-      return "Invalid response for request '\(request.method)': \(error.localizedDescription)"
+    case let .requestFailed(request, error, data):
+      // Create JSON payload with both request and response
+      var payload: [String: JSONValue] = [:]
+      
+      // Encode the request
+      if let requestData = try? JSONEncoder().encode(request),
+         let requestJSON = try? JSONDecoder().decode(JSONValue.self, from: requestData) {
+        payload["request"] = requestJSON
+      }
+      
+      // Decode the response data
+      if let responseJSON = try? JSONDecoder().decode(JSONValue.self, from: data) {
+        payload["response"] = responseJSON
+      }
+      
+      let jsonPayload = JSONValue.object(payload)
+      let json = JSONUtility.compactString(from: jsonPayload) ?? String(data: data, encoding: .utf8) ?? "<data: \(data.count) bytes>"
+      return "Request \"\(request.method)\" failed (code: \(error.error.code), message: \"\(error.error.message)\"). \(json)"
+    case let .requestInvalidResponse(request, error, data):
+      // Create JSON payload with both request and response
+      var payload: [String: JSONValue] = [:]
+      
+      // Encode the request
+      if let requestData = try? JSONEncoder().encode(request),
+         let requestJSON = try? JSONDecoder().decode(JSONValue.self, from: requestData) {
+        payload["request"] = requestJSON
+      }
+      
+      // Decode the response data (it might not be valid JSON, so we handle the failure)
+      if let responseJSON = try? JSONDecoder().decode(JSONValue.self, from: data) {
+        payload["response"] = responseJSON
+      } else {
+        // If it's not valid JSON, include the raw string
+        payload["response"] = JSONValue.string(String(data: data, encoding: .utf8) ?? "<data: \(data.count) bytes>")
+      }
+      
+      let jsonPayload = JSONValue.object(payload)
+      let json = JSONUtility.compactString(from: jsonPayload) ?? String(data: data, encoding: .utf8) ?? "<data: \(data.count) bytes>"
+      return "Invalid JSON-RPC response for request '\(request.method)': \(error.localizedDescription). \(json)"
     case let .requestTimedOut(request):
-      return "Request '\(request.method)' timed out"
+      return "Request timed out. \(JSONUtility.compactString(from: request) ?? "")"
     case let .requestCancelled(id):
-      return "Request with ID '\(id)' was cancelled"
+      return "Request with ID \"\(id)\" was cancelled"
+    case let .serverError(_, data):
+      let json = String(data: data, encoding: .utf8) ?? "<data: \(data.count) bytes>"
+      return "Server error. \(json)"
     case .notConnected:
       return "Client is not connected to server"
     case let .capabilityNotSupported(capability):
       return "Server doesn't support capability: \(capability)"
-    case let .noPendingRequest(id):
-      return "No pending request for ID \(id)"
-    case let .unsupportedNotification(method):
-      return "Received unsupported notification: \(method)"
+    case let .noPendingRequest(id, data):
+      let json = String(data: data, encoding: .utf8) ?? "<data: \(data.count) bytes>"
+      return "Received a response for a request with ID '\(id)', which the client did not send. \(json)"
+    case let .unsupportedNotification(data):
+      let json = String(data: data, encoding: .utf8) ?? "<data: \(data.count) bytes>"
+      return "Received unsupported notification. \(json)"
     case let .unexpectedRequestType(method, expectedType):
       return "Expected request of type \(expectedType) for method \(method)"
     }
@@ -113,13 +157,10 @@ public actor Client {
     _connectionState
   }
 
-  /// Stream of errors returned by the server that are *not* a response to a request sent by
-  /// the client. These errors are returned directly by the corresponding request APIs.
-  public var errors = AsyncChannel<JSONRPCError>()
-
   /// Stream of all errors that occur within the client, including transport errors,
-  /// protocol errors, and other internal errors.
-  public var streamErrors = AsyncChannel<Error>()
+  /// protocol errors, and other internal errors. This also includes errors returned
+  /// by the server that are *not* a response to a request sent by the client.
+  public var errors = AsyncChannel<Error>()
 
   /// Stream of logs emitted by the server.
   public var logs = AsyncChannel<ServerLog>()
@@ -599,23 +640,23 @@ public actor Client {
     _ response: TransportResponse, group: inout ThrowingTaskGroup<Void, Error>
   ) {
     switch response {
-    case let .successfulRequest(request: request, response: response):
-      handleSuccessfulRequest(request: request, response: response, group: &group)
-    case let .failedRequest(request: request, error: error):
-      handleFailedRequest(request: request, error: error)
+    case let .successfulRequest(request: request, response: response, data: data):
+      handleSuccessfulRequest(request: request, response: response, data: data, group: &group)
+    case let .failedRequest(request: request, error: error, data: data):
+      handleFailedRequest(request: request, error: error, data: data)
     case let .decodingError(request: request, error: error, data: data):
       handleDecodingError(request: request, error: error, data: data)
-    case let .serverNotification(notification):
-      handleNotification(notification, group: &group)
-    case let .serverRequest(request):
+    case let .serverNotification(notification, data: data):
+      handleNotification(notification, data: data, group: &group)
+    case let .serverRequest(request, data: _):
       handleServerRequest(request, group: &group)
-    case let .serverError(error):
-      handleError(error, group: &group)
+    case let .serverError(error, data: data):
+      logAndStreamError("Server error", error: ClientError.serverError(error: error, data: data))
     }
   }
 
   private func handleSuccessfulRequest(
-    request: any JSONRPCRequest, response: any JSONRPCResponse,
+    request: any JSONRPCRequest, response: any JSONRPCResponse, data: Data,
     group: inout ThrowingTaskGroup<Void, Error>
   ) {
     if request.method == "initialize" {
@@ -631,12 +672,12 @@ public actor Client {
       }
       requestChannels.removeValue(forKey: request.id)
     } else {
-      let error = ClientError.noPendingRequest(id: request.id)
+      let error = ClientError.noPendingRequest(id: request.id, data: data)
       logAndStreamError("No pending request", error: error)
     }
   }
 
-  private func handleFailedRequest(request: any JSONRPCRequest, error: JSONRPCError) {
+  private func handleFailedRequest(request: any JSONRPCRequest, error: JSONRPCError, data: Data) {
     if request.method == "initialize" {
       logger.debug(
         "Client received response to initialize request; this will be handled by the transport")
@@ -644,10 +685,10 @@ public actor Client {
     }
 
     if let channel = requestChannels[request.id] {
-      channel.fail(ClientError.requestFailed(request: request, error: error))
+      channel.fail(ClientError.requestFailed(request: request, error: error, data: data))
       requestChannels.removeValue(forKey: request.id)
     } else {
-      let error = ClientError.noPendingRequest(id: request.id)
+      let error = ClientError.noPendingRequest(id: request.id, data: data)
       logAndStreamError("No pending request", error: error)
     }
   }
@@ -659,13 +700,13 @@ public actor Client {
       channel.fail(ClientError.requestInvalidResponse(request: request, error: error, data: data))
       requestChannels.removeValue(forKey: request.id)
     } else {
-      let error = ClientError.noPendingRequest(id: request.id)
+      let error = ClientError.noPendingRequest(id: request.id, data: data)
       logAndStreamError("No pending request", error: error)
     }
   }
 
   private func handleNotification(
-    _ notification: any JSONRPCNotification, group: inout ThrowingTaskGroup<Void, Error>
+    _ notification: any JSONRPCNotification, data: Data, group: inout ThrowingTaskGroup<Void, Error>
   ) {
     switch notification {
     case let logMessage as LoggingMessageNotification:
@@ -684,13 +725,13 @@ public actor Client {
       logger.info("Tool list changed")
       toolListChanged = true
     case let cancelled as CancelledNotification:
-      handleCancelledNotification(cancelled)
+      handleCancelledNotification(cancelled, data: data)
     case let resourceUpdated as ResourceUpdatedNotification:
       handleResourceUpdatedNotification(resourceUpdated, group: &group)
     case is ProgressNotification:
       logger.info("Progress notifications are not yet supported")
     default:
-      let error = ClientError.unsupportedNotification(method: notification.method)
+      let error = ClientError.unsupportedNotification(data: data)
       logAndStreamError("Received unsupported notification", error: error)
     }
   }
@@ -716,7 +757,7 @@ public actor Client {
     }
   }
 
-  private func handleCancelledNotification(_ cancelled: CancelledNotification) {
+  private func handleCancelledNotification(_ cancelled: CancelledNotification, data: Data) {
     guard let id = cancelled.params?.requestId else {
       logger.warning("Received cancelled notification without requestId")
       return
@@ -726,7 +767,7 @@ public actor Client {
       requestChannels.removeValue(forKey: id)
       logger.info("Request \(id) cancelled with reason: \(cancelled.params?.reason ?? "<none>")")
     } else {
-      let error = ClientError.noPendingRequest(id: id)
+      let error = ClientError.noPendingRequest(id: id, data: data)
       logAndStreamError("No pending request", error: error)
     }
   }
@@ -883,18 +924,11 @@ public actor Client {
     }
   }
 
-  private func handleError(_ error: JSONRPCError, group: inout ThrowingTaskGroup<Void, Error>) {
-    group.addTask {
-      await self.errors.send(error)
-    }
-  }
-
-  /// Log an error and send it to the streamErrors channel.
+  /// Log an error and send it to the errors channel.
   private func logAndStreamError(_ message: String, error: Error) {
     logger.error("\(message): \(error)")
     Task {
-      await streamErrors.send(error)
+      await errors.send(error)
     }
   }
-
 }
